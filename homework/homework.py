@@ -43,9 +43,7 @@
 # - Remueva la columna "ID".
 # - Elimine los registros con informacion no disponible.
 # - Para la columna EDUCATION, valores > 4 indican niveles superiores
-#   de educación, agrupe estos valores en la categoría "others".
-# - Renombre la columna "default payment next month" a "default"
-# - Remueva la columna "ID".
+#
 #
 #
 # Paso 2.
@@ -92,3 +90,257 @@
 # {'type': 'cm_matrix', 'dataset': 'train', 'true_0': {"predicted_0": 15562, "predicte_1": 666}, 'true_1': {"predicted_0": 3333, "predicted_1": 1444}}
 # {'type': 'cm_matrix', 'dataset': 'test', 'true_0': {"predicted_0": 15562, "predicte_1": 650}, 'true_1': {"predicted_0": 2490, "predicted_1": 1420}}
 #
+############################################################################################
+## Solution
+
+import pandas as pd
+import numpy as np
+import os
+import gzip
+import pickle
+import json
+import os
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.pipeline import Pipeline
+from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import (
+    precision_score, recall_score, f1_score, balanced_accuracy_score,
+    confusion_matrix
+)
+
+# ============================
+# Paso 1. Cargar y limpiar datos
+# ============================
+def load_data(Pathfile1, Pathfile2=None):
+    import pandas as pd
+
+    if Pathfile2 is not None:
+        train_df = pd.read_csv(Pathfile1, index_col=False)
+        test_df = pd.read_csv(Pathfile2, )
+        return train_df, test_df
+    else:
+        df = pd.read_csv(Pathfile1)
+        return df
+
+
+def clean_dataset(df: pd.DataFrame) -> pd.DataFrame:
+    df.rename(columns={"default payment next month": "default"}, inplace=True)
+
+    df.drop(columns=["ID"], inplace=True)
+
+    df = df.loc[df["MARRIAGE"] != 0]
+    df = df.loc[df["EDUCATION"] != 0]
+
+    df["EDUCATION"] = df["EDUCATION"].apply(lambda x: 4 if x > 4 else x)
+
+    df.dropna(inplace=True)
+
+    # 👇 Asegurar que sean categóricas
+    df[["SEX", "EDUCATION", "MARRIAGE"]] = df[["SEX", "EDUCATION", "MARRIAGE"]].astype(str)
+
+    # Eliminar duplicados
+    df = df.drop_duplicates()
+
+    return df
+
+
+# =====================
+# Paso 2: Separar variables y objetivo
+# =====================
+
+
+def split_features_target(train_df, test_df, target_col="default"):
+    x_train = train_df.drop(columns=[target_col])
+    y_train = train_df[target_col]
+    x_test = test_df.drop(columns=[target_col])
+    y_test = test_df[target_col]
+
+    return x_train, y_train, x_test, y_test
+
+def make_train_test_split(x, y):
+
+    from sklearn.model_selection import train_test_split
+
+    (x_train, x_test, y_train, y_test) = train_test_split(
+        x,
+        y,
+        test_size=0.25,
+        random_state=42
+    )
+    print("Tamaños:")
+    print("x_train:", x_train.shape)
+    print("y_train:", y_train.shape)
+    print("x_test:", x_test.shape)
+    print("y_test:", y_test.shape)
+
+    return x_train, x_test, y_train, y_test
+
+
+# =====================
+# Paso 3: Crear pipeline
+# =====================
+
+def make_pipeline(list_categorical, estimator):
+    from sklearn.compose import ColumnTransformer
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import OneHotEncoder
+
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ("onehot", OneHotEncoder(handle_unknown="ignore"), list_categorical)
+        ],
+        remainder="passthrough"
+    )
+
+    pipeline = Pipeline(
+        steps=[
+            ("encoder", preprocessor),
+            ("classifier", estimator)
+        ]
+    )
+
+    return pipeline
+
+
+
+# =====================
+# Paso 4: Optimización de hiperparámetros
+# =====================
+
+  
+def make_grid_search(pipeline, param_grid, cv, score, x_train, y_train):
+
+    from sklearn.model_selection import GridSearchCV
+
+    grid_search = GridSearchCV(
+        estimator=pipeline,
+        param_grid=param_grid,
+        cv=cv,
+        scoring=score,
+        n_jobs=-1,
+        verbose=2
+    )
+
+    grid_search.fit(x_train, y_train)
+
+    return grid_search
+
+
+# =====================
+# Paso 5: Guardar el modelo
+# =====================
+
+def save_estimator(estimator):
+    models_path = "files/models"
+    os.makedirs(models_path, exist_ok=True)
+
+    with gzip.open("files/models/model.pkl.gz", "wb") as file:
+        pickle.dump(estimator, file)     
+    print(f"Modelo guardado en: {'files/models/model.pkl.gz'}")
+
+
+def load_estimator(output_path):
+    """Cargar modelo comprimido"""
+    import gzip, pickle
+    if not os.path.exists(output_path):
+        return None
+    with gzip.open(output_path, "rb") as f:
+        return pickle.load(f)
+
+
+# =====================
+# Paso 6: Calcular métricas y guardarlas en un archivo JSON
+# =====================
+
+# Calcular métricas para el conjunto de entrenamiento y prueba
+
+def calc_metrics(model, x_train, y_train, x_test, y_test):
+
+    y_train_pred = model.predict(x_train)
+    y_test_pred = model.predict(x_test)
+
+    cm_train = confusion_matrix(y_train, y_train_pred)
+    cm_test = confusion_matrix(y_test, y_test_pred)
+
+    metrics = [
+        {
+            'type': 'metrics',
+            'dataset': 'train',
+            'precision': precision_score(y_train, y_train_pred, zero_division=0),
+            'balanced_accuracy': balanced_accuracy_score(y_train, y_train_pred),
+            'recall': recall_score(y_train, y_train_pred, zero_division=0),
+            'f1_score': f1_score(y_train, y_train_pred, zero_division=0)
+        },
+        {
+            'type': 'metrics',
+            'dataset': 'test',
+            'precision': precision_score(y_test, y_test_pred, zero_division=0),
+            'balanced_accuracy': balanced_accuracy_score(y_test, y_test_pred),
+            'recall': recall_score(y_test, y_test_pred, zero_division=0),
+            'f1_score': f1_score(y_test, y_test_pred, zero_division=0)
+        },
+        {
+            'type': 'cm_matrix',
+            'dataset': 'train',
+            'true_0': {'predicted_0': int(cm_train[0, 0]), 'predicted_1': int(cm_train[0, 1])},
+            'true_1': {'predicted_0': int(cm_train[1, 0]), 'predicted_1': int(cm_train[1, 1])}
+        },
+        {
+            'type': 'cm_matrix',
+            'dataset': 'test',
+            'true_0': {'predicted_0': int(cm_test[0, 0]), 'predicted_1': int(cm_test[0, 1])},
+            'true_1': {'predicted_0': int(cm_test[1, 0]), 'predicted_1': int(cm_test[1, 1])}
+        }
+    ]
+
+    return metrics
+
+def save_metrics(metrics):
+    metrics_path = "files/output"
+    os.makedirs(metrics_path, exist_ok=True)
+    
+    with open("files/output/metrics.json", "w") as file:
+        for metric in metrics:
+            file.write(json.dumps(metric, ensure_ascii=False))
+            file.write('\n')
+
+
+########################################################################
+### Orquestador entrenanmiento y evaluación del modelo
+########################################################################
+def main():
+
+    train_df, test_df = load_data("files/input/train_data.csv.zip","files/input/test_data.csv.zip")
+
+    train_df = clean_dataset(train_df)
+    test_df = clean_dataset(test_df)
+
+    x_train, y_train, x_test, y_test = split_features_target(train_df, test_df, "default")
+
+    list_categorical = ["EDUCATION", "MARRIAGE", "SEX"]
+
+    pipeline = make_pipeline(list_categorical, RandomForestClassifier(random_state=42))
+
+    # Definir los hiperparámetros a optimizar
+    param_grid = {
+        "classifier__n_estimators": [30, 50, 100],
+        "classifier__max_depth": [None, 10, 20],
+        "classifier__min_samples_split": [5, 10],
+        "classifier__min_samples_leaf": [2, 4],
+        "classifier__max_features": [10, 25]
+    }
+
+    # Ajustar el modelo con los datos de entrenamiento
+    # En estimator se pasa el pipeline
+    model = make_grid_search(pipeline, param_grid, cv=10, score="balanced_accuracy", x_train=x_train, y_train=y_train)
+
+    save_estimator(model)
+
+    metrics = calc_metrics(model, x_train, y_train, x_test, y_test)
+
+    save_metrics(metrics)
+
+if __name__ == "__main__":
+    main()
