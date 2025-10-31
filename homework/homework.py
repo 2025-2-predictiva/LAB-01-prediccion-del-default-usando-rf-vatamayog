@@ -146,9 +146,9 @@ def clean_dataset(df: pd.DataFrame) -> pd.DataFrame:
 
 def split_features_target(train_dataset, test_dataset, target_col="default"):
     x_train = train_dataset.drop(columns=[target_col])
-    y_train = train_dataset[target_col].astype(int).values.ravel()
+    y_train = train_dataset[target_col]
     x_test = test_dataset.drop(columns=[target_col])
-    y_test = test_dataset[target_col].astype(int).values.ravel()
+    y_test = test_dataset[target_col]
     return x_train, y_train, x_test, y_test
 
 def make_train_test_split(x, y):
@@ -175,11 +175,11 @@ def make_train_test_split(x, y):
 # =====================
 
 
-def make_pipeline(list_categorical, estimator):
+def make_pipeline(categorical_features, estimator):
 
     preprocessor = ColumnTransformer(
         transformers=[
-            ("onehot", OneHotEncoder(handle_unknown="ignore"), list_categorical)
+            ("onehot", OneHotEncoder(handle_unknown="ignore"), categorical_features)
         ],
         remainder="passthrough"
     )
@@ -188,7 +188,8 @@ def make_pipeline(list_categorical, estimator):
         steps=[
             ("preprocessor", preprocessor),
             ("classifier", estimator)
-        ]
+        ], 
+        verbose=False
     )
 
     return pipeline
@@ -213,7 +214,7 @@ def make_grid_search(pipeline, param_grid, cv, score, x_train, y_train):
         verbose=2
     )
 
-    grid_search.fit(x_train, np.ravel(y_train))
+    grid_search.fit(x_train, y_train)
 
     return grid_search
 
@@ -296,10 +297,6 @@ def save_metrics(metrics):
             file.write(json.dumps(metric, ensure_ascii=False))
             file.write('\n')
     
-    with open("files/output/metrics.json", "r") as file:
-        print("Contenido de metrics.json:")
-        print(file.read())
-
 ########################################################################
 ### Orquestador entrenanmiento y evaluación del modelo
 ########################################################################
@@ -312,9 +309,9 @@ def main():
 
     x_train, y_train, x_test, y_test = split_features_target(train_dataset, test_dataset, "default")
 
-    list_categorical = ["EDUCATION", "MARRIAGE", "SEX"]
+    categorical_features = ["EDUCATION", "MARRIAGE", "SEX"]
 
-    pipeline = make_pipeline(list_categorical, RandomForestClassifier(random_state=42))
+    pipeline = make_pipeline(categorical_features, RandomForestClassifier(random_state=42))
 
     # Definir los hiperparámetros a optimizar
     param_grid = {
